@@ -1,7 +1,8 @@
 # 🦾 Oracle ARM Hunter
 
-Automatically provision an **Oracle Cloud Always Free ARM instance** the moment capacity becomes available.
+![Screenshot](https://s6.imgcdn.dev/YFkkoo.png)
 
+Automatically provision an **Oracle Cloud Always Free ARM instance** the moment capacity becomes available.
 No more refreshing the OCI Console every few minutes — just start the hunter and let it work until your VM is created.
 
 ---
