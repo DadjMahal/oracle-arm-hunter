@@ -1,0 +1,27 @@
+[Unit]
+Description=Oracle ARM Hunter - Automatic provisioning daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/oracle-arm-hunter
+Environment=PATH=/opt/oracle-arm-hunter/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/etc/oracle-arm-hunter.env
+ExecStart=/opt/oracle-arm-hunter/venv/bin/python /opt/oracle-arm-hunter/hunter.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/opt/oracle-arm-hunter/logs/service.log
+StandardError=append:/opt/oracle-arm-hunter/logs/service-error.log
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/oracle-arm-hunter/logs /opt/oracle-arm-hunter/state /tmp
+
+[Install]
+WantedBy=multi-user.target
