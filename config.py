@@ -32,14 +32,15 @@ BOOT_VOLUME_SIZE_GB = 100          # Boot volume size
 IMAGE_OS = "Canonical Ubuntu"
 IMAGE_VERSION = "24.04"
 
-# Timing parameters (seconds)
-MIN_DELAY = 10                     # Min wait between AD cycles
-MAX_DELAY = 30                     # Max wait between AD cycles
-INITIAL_BACKOFF = 30               # Starting backoff for 429 errors
-MAX_BACKOFF = 900                  # Maximum backoff (15 min)
-SERVER_ERROR_MIN = 30              # Min wait after 5xx errors
-SERVER_ERROR_MAX = 90              # Max wait after 5xx errors
-LOOP_SLEEP = 60                    # Sleep between full cycles
+# ⚡ UPDATED SAFE & STEADY TIMINGS (30-35s Base, 60-100s Error Windows)
+# Safer baseline cycle prevents deep bans, allowing ultra-fast recovery from limits.
+MIN_DELAY = 25                     # Min wait between AD cycles
+MAX_DELAY = 35                     # Max wait between AD cycles
+INITIAL_BACKOFF = 60               # Start recovery delay on 429 errors (60 seconds)
+MAX_BACKOFF = 100                  # Maximum backoff capped exactly at 100 seconds
+SERVER_ERROR_MIN = 60              # Min wait after 5xx server errors
+SERVER_ERROR_MAX = 100             # Max wait after 5xx server errors
+JITTER_FACTOR = 0.10               # 10% jitter to slightly desynchronize requests
 
 # SSH key file
 SSH_KEY_PATH = Path.home() / ".ssh" / "authorized_keys"

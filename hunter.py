@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# hunter.py - The main hunter logic: try to create an ARM instance 🎯
+# hunter.py - Fast cycles with smart adaptive micro-pacing 🎯
 import time
 import sys
 import traceback
@@ -18,7 +18,7 @@ from telegram import notifier as telegram
 from lock import ProcessLock
 
 class OracleArmHunter:
-    """Main hunter that orchestrates the ARM instance provisioning."""
+    """Main hunter that runs fast AD bursts with anti-burst micro-delays."""
 
     def __init__(self):
         self.state = State()
@@ -60,6 +60,10 @@ class OracleArmHunter:
     def run(self):
         """Entry point for hunting process."""
         try:
+            # 🤖 Fire up the interactive background command polling
+            telegram.start_listener(self.state, self.retry)
+            
+            # Send standard boot alert
             telegram.notify_start(self.state)
 
             # Check if instance already running
@@ -84,7 +88,7 @@ class OracleArmHunter:
             ads = self.client.get_availability_domains()
             logger.info(f"📍 Availability domains: {', '.join(ads)}")
 
-            # Start the endless hunting loop
+            # Сюди передаємо саме image.id (Виправлено! 🛠️)
             self._hunt_loop(ads, subnet.id, image.id)
 
         except KeyboardInterrupt:
@@ -96,7 +100,7 @@ class OracleArmHunter:
             raise
 
     def _hunt_loop(self, ads, subnet_id, image_id):
-        """Cycle through ADs until instance is created."""
+        """Fast burst loop through all ADs with dynamic anti-429 buffers between them."""
         while True:
             self.state.next_cycle()
             cycle = self.state.data["cycle"]
@@ -104,99 +108,76 @@ class OracleArmHunter:
             logger.info(f"🔄 Starting cycle #{cycle}")
             logger.info(f"{'='*60}")
 
-            for ad in ads:
+            for i, ad in enumerate(ads):
                 self.state.set_ad(ad)
                 self.state.next_attempt()
                 attempt = self.state.data["attempt"]
                 logger.info(f"🎯 Attempt #{attempt} | AD: {ad}")
 
                 details = self.build_details(ad, subnet_id, image_id)
+                is_capacity_limit = False
+                
                 try:
                     response = self.client.launch_instance(details)
                     instance_id = response.data.id
                     logger.success("🎉 INSTANCE CREATED!")
-                    logger.success(f"🆔 ID: {instance_id}")
-
+                    
                     self.retry.success()
-
-                    # Wait for public IP (up to 20 seconds)
                     ip = None
                     for _ in range(10):
                         ip = self.client.get_public_ip(instance_id)
-                        if ip:
-                            break
+                        if ip: break
                         time.sleep(2)
 
                     self.state.success(instance_id, ip)
-                    if ip:
-                        logger.success(f"🌐 Public IP: {ip}")
-                    else:
-                        logger.warning("⚠️ No public IP assigned yet.")
-
-                    logger.success("✅ Hunter finished successfully.")
                     telegram.notify_success(instance_id, ip, self.state)
-                    return  # Exit program
+                    return
 
                 except ServiceError as e:
-                    self._handle_service_error(e, ad)
+                    is_capacity_limit = self._handle_service_error(e, ad)
 
-            # All ADs tried, wait before next cycle
+                # ⏱️ DYNAMIC MICRO-PACING (Driven by RetryManager optimization):
+                if is_capacity_limit and i < len(ads) - 1:
+                    m_delay = self.retry.get_micro_delay()
+                    logger.info(f"⏱️  Micro-sleep {m_delay}s to evade Oracle Anti-DDoS filters...")
+                    time.sleep(m_delay)
+
+            # ⏳ Full cycle completed! Now we sleep the main adaptive time (25-35s)
             delay = self.retry.wait_capacity()
-            logger.info(f"⏳ All ADs exhausted. Waiting {delay}s before next cycle...")
+            logger.info(f"⏳ Cycle #{cycle} done. Waiting {delay}s before next full scan...")
             time.sleep(delay)
 
     def _handle_service_error(self, e, ad):
-        """Process an OCI ServiceError with proper logging and retry logic."""
+        """Process OCI ServiceError. Returns True if it was a capacity error."""
         if self.client.is_capacity_error(e):
-            # Short warning to console, full details to debug log
             logger.warning(f"⚠️ {ad}: Out of host capacity")
-            debug("Capacity error details:\n" + json.dumps({
-                "ad": ad, "status": e.status, "code": e.code,
-                "message": e.message, "request_id": getattr(e, 'request_id', 'N/A')
-            }, indent=2))
-            return  # continue to next AD
+            # Log metrics without triggering a long sleep inside the loop
+            self.retry.data["last_error"] = "Out of host capacity"
+            self.retry.data["total_retries"] += 1
+            self.retry.data["retries_today"] += 1
+            self.retry.save()
+            return True
 
         if e.status == 429:
             delay = self.retry.wait_429()
-            logger.warning(f"⏳ Rate limited (429). Sleeping {delay}s...")
+            logger.warning(f"🛑 Rate limited (429)! Cooling down immediately for {delay}s...")
             time.sleep(delay)
-            return
+            return False
 
         if e.status >= 500:
             delay = self.retry.wait_server_error()
-            logger.warning(f"⚠️ Server error {e.status}. Sleeping {delay}s...")
-            debug(f"Server error details: {e.message}")
+            logger.warning(f"💥 Server error {e.status}. Sleeping {delay}s...")
             time.sleep(delay)
-            return
+            return False
 
-        # Unknown critical error
         logger.error(f"💥 Unexpected OCI error: {e.message}")
-        debug("Full error:\n" + json.dumps({
-            "status": e.status, "code": e.code,
-            "message": e.message, "request_id": getattr(e, 'request_id', 'N/A')
-        }, indent=2))
         telegram.notify_error(f"Unexpected: {e.message}", self.state)
         raise
 
-def main():
-    """Entry point with process lock."""
-    lock = ProcessLock()
-    with lock:
-        hunter = OracleArmHunter()
-        hunter.run()
-
 if __name__ == "__main__":
     try:
-        main()
-    except KeyboardInterrupt:
-        logger.warning("⏹️ Stopped by user.")
+        with ProcessLock():
+            hunter = OracleArmHunter()
+            hunter.run()
     except Exception as e:
-        logger.error(f"💥 Fatal: {str(e)}")
-        debug(traceback.format_exc())
-    finally:
-        # Ensure lock file is cleaned up
-        if os.path.exists(config.LOCK_FILE):
-            try:
-                os.remove(config.LOCK_FILE)
-            except Exception:
-                pass
+        sys.exit(1)

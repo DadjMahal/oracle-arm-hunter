@@ -1,13 +1,15 @@
-# telegram.py - Telegram notifications for hunter events 📬
+# telegram.py - Telegram notifications and interactive command listener 📬
 import requests
+import threading
+import time
 from datetime import datetime
 import config
 from logger import logger
 
 class TelegramNotifier:
     """
-    Sends notifications via Telegram bot.
-    Messages are sent on start, success, and critical errors.
+    Sends notifications via Telegram bot and runs a background listener
+    to respond to interactive commands like /status.
     """
     def __init__(self):
         self.enabled = config.TELEGRAM_ENABLED
@@ -75,6 +77,89 @@ class TelegramNotifier:
 <b>Cycle:</b> {state.get("cycle", 0)}
 
 <i>Hunter will retry. Check logs for details.</i>"""
+        self.send_message(msg)
+
+    def start_listener(self, state, retry):
+        """Starts the background long-polling thread for commands."""
+        if not self.enabled:
+            return
+        listener_thread = threading.Thread(target=self._command_loop, args=(state, retry), daemon=True)
+        listener_thread.start()
+        logger.info("🤖 Telegram command listener successfully activated in background.")
+
+    def _command_loop(self, state, retry):
+        """Internal loop to catch and process /status command using long-polling."""
+        offset = 0
+        
+        # 🔄 Drop old messages from queue on startup to avoid spamming replies
+        try:
+            url = f"https://api.telegram.org/bot{self.token}/getUpdates"
+            resp = requests.get(url, params={"limit": 1, "timeout": 1}, timeout=5)
+            if resp.status_code == 200:
+                results = resp.json().get("result", [])
+                if results:
+                    offset = results[0]["update_id"] + 1
+        except Exception as e:
+            logger.debug(f"Telegram offset initialization skipped: {e}")
+
+        while True:
+            try:
+                url = f"https://api.telegram.org/bot{self.token}/getUpdates"
+                # Use standard long-polling timeout to save resource and react instantly
+                resp = requests.get(url, params={"offset": offset, "timeout": 20}, timeout=25)
+                if resp.status_code != 200:
+                    time.sleep(5)
+                    continue
+
+                updates = resp.json().get("result", [])
+                for update in updates:
+                    offset = update["update_id"] + 1
+                    message = update.get("message", {})
+                    text = message.get("text", "").strip()
+                    chat_id = str(message.get("chat", {}).get("id", ""))
+
+                    # 🛡️ Only process commands coming from your authorized Chat ID
+                    if chat_id != str(self.chat_id):
+                        continue
+
+                    if text == "/status":
+                        self._send_status_reply(state, retry)
+
+            except Exception as e:
+                logger.debug(f"Telegram listener temporary error: {e}")
+                time.sleep(5)
+
+    def _send_status_reply(self, state, retry):
+        """Compiles accurate hunting telemetry metrics and replies to user."""
+        s_data = state.data
+        r_data = retry.data
+        
+        status_label = "🎉 SUCCESS" if s_data.get("success") else "🎮 HUNTING ACTIVE"
+        started_clean = s_data.get("started_at", "N/A")[:19].replace("T", " ")
+        
+        # Calculate dynamic next check time estimate
+        next_ts = r_data.get("next_retry", time.time())
+        next_check = datetime.fromtimestamp(next_ts).strftime('%H:%M:%S')
+
+        msg = f"""🤖 <b>Oracle ARM Hunter Status</b>
+──────────────────
+ℹ️ <b>Status:</b> <code>{status_label}</code>
+🔄 <b>Current Cycle:</b> #{s_data.get("cycle", 0)}
+🎯 <b>Current Attempt:</b> #{s_data.get("attempt", 0)}
+📍 <b>Last Searched AD:</b> <code>{s_data.get("current_ad", "None") or "None"}</code>
+──────────────────
+📊 <b>Statistics:</b>
+├ 🔁 <b>Total Requests:</b> {r_data.get("total_retries", 0)}
+├ 📅 <b>Retries Today:</b> {r_data.get("retries_today", 0)}
+└ ⏱️ <b>Last Sleep Delay:</b> {r_data.get("last_delay", 0)}s
+
+🕒 <b>Started At:</b> <code>{started_clean}</code>
+🔮 <b>Next Wakeup At:</b> <code>{next_check}</code>
+"""
+        if s_data.get("success"):
+            msg += f"🌐 <b>Public IP Assigned:</b> <code>{s_data.get('public_ip', 'N/A')}</code>\n"
+            msg += f"🆔 <b>VM ID:</b> <code>{s_data.get('instance_id', 'N/A')}</code>"
+            
         self.send_message(msg)
 
 # Create a global notifier instance
