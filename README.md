@@ -47,11 +47,13 @@ The UI... could use a little love. ❤️
 | Automatic Ubuntu ARM image detection | ✅ |
 | Smart retry logic | ✅ |
 | Exponential backoff for API limits | ✅ |
+| Adaptive Anti-DDoS Pacing (Dynamic 429 evasion) | ✅ |
 | Random retry delays for capacity errors | ✅ |
 | Persistent state | ✅ |
 | Process lock | ✅ |
 | Colored console logging | ✅ |
 | Log file | ✅ |
+| Native Telemetry Dashboard CLI | ✅ |
 | Public IP detection | ✅ |
 | Telegram notifications | ✅ |
 | systemd service | ✅ |
@@ -224,6 +226,18 @@ sudo journalctl -u oracle-arm-hunter -f
 
 ---
 
+# 📊 Real-Time Telemetry Dashboard
+
+To monitor your hunting process, auto-tuned windows, clean streaks, and total 429 tracking natively without interrupting the background daemon:
+
+```bash
+python3 /opt/oracle-arm-hunter/status_cli.py
+```
+
+*Tip: You can safely exit this screen anytime using `Ctrl + C`. The hunter will remain running in the background.*
+
+---
+
 # 📬 Telegram Notifications
 
 Create a bot:
@@ -274,19 +288,19 @@ TELEGRAM_ENABLED = True
 
 # 🔄 Retry Algorithm
 
-The hunter cycles through every Availability Domain.
+The hunter cycles through every Availability Domain with smart micro-pacing between them to bypass Oracle burst rate-limits.
 
 ```text
 AD-1
  │
  ▼
-Out of capacity?
+[Micro-Delay]
  │
  ▼
 AD-2
  │
  ▼
-Out of capacity?
+[Micro-Delay]
  │
  ▼
 AD-3
@@ -295,7 +309,7 @@ AD-3
 Out of capacity?
  │
  ▼
-Sleep
+Base Sleep (Adaptive)
  │
  ▼
 Repeat
@@ -322,19 +336,19 @@ Exit
 
 ```text
                     hunter.py
-                         │
-      ┌──────────────────┼──────────────────┐
-      │                  │                  │
-      ▼                  ▼                  ▼
-oracle_client.py     retry.py          state.py
-      │                  │                  │
-      └──────────────────┼──────────────────┘
-                         │
-                         ▼
+                        │
+      ┌─────────────────┼─────────────────┐
+      │                 │                 │
+      ▼                 ▼                 ▼
+oracle_client.py     retry.py          state.py   ◄── status_cli.py
+      │                 │                 │
+      └─────────────────┼─────────────────┘
+                        │
+                        ▼
                     logger.py
-                         │
-                         ▼
-                      logs/
+                        │
+                        ▼
+                     logs/
 ```
 
 ---
@@ -347,11 +361,12 @@ oracle-arm-hunter/
 ├── hunter.py                 # Main application loop
 ├── oracle_client.py          # Oracle Cloud SDK wrapper
 ├── config.py                 # Configuration
-├── retry.py                  # Retry manager
+├── retry.py                  # Retry manager with anti-429 dynamic buffers
 ├── state.py                  # Persistent state
 ├── logger.py                 # Logging
 ├── lock.py                   # Process lock
 ├── telegram.py               # Telegram notifications
+├── status_cli.py             # Native real-time telemetry control panel
 │
 ├── requirements.txt
 ├── install.sh
