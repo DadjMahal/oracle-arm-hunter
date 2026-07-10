@@ -77,7 +77,7 @@ The hunter is preconfigured with these values – you don’t need to change any
 ## 🚀 Quick Start
 
 ### Clone and install
-git clone https://github.com/yourusername/oracle-arm-hunter.git
+git clone https://github.com/DadjMahal/oracle-arm-hunter.git
 cd oracle-arm-hunter
 chmod +x install.sh
 sudo ./install.sh
