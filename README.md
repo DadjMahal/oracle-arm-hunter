@@ -1,175 +1,448 @@
 # 🦾 Oracle ARM Hunter
 
-Automatically provision an **Oracle Cloud Always Free ARM instance** the moment capacity becomes available.  
-No more manual clicking – set it, forget it, and let the hunter do the work.
+Automatically provision an **Oracle Cloud Always Free ARM instance** the moment capacity becomes available.
+
+No more refreshing the OCI Console every few minutes — just start the hunter and let it work until your VM is created.
 
 ---
 
-## 💢 Why this exists
+# 💢 Why this exists
 
-Oracle Cloud’s “Always Free” tier includes up to **2 OCPUs and 12 GB of RAM** on ARM architecture.  
-In reality, you’re often greeted with *“Out of host capacity”* for days or weeks.  
-This tool automates the retry process until the instance is created.
+Oracle Cloud offers an excellent **Always Free** ARM tier:
 
-## 🎭 Oracle UX: a small friendly rant
+- 2 OCPUs
+- 12 GB RAM
+- Fast Ampere A1 processors
 
-Let’s be honest – Oracle has the resources to build a truly world‑class user experience.  
-A company of this calibre could easily hire a few more UX engineers and designers **without letting go of the talented people already on board**.  
+Unfortunately, in popular regions you'll often see:
 
-Instead, the current OCI console often feels like a maze built by engineers who never had to actually use it.  
-Buttons are hidden, menus multiply like rabbits, and finding a simple virtual machine can turn into an archaeological dig.  
+> **Out of host capacity**
 
-We’re not asking for much – just a UI that doesn’t require 17 clicks to launch an instance, and perhaps a dash of modern design.  
-Oracle, if you’re reading this: we love your Always Free tier. Now please give your existing team the tools (and maybe a couple extra hands) to make the console as generous as the compute offer.
+for hours, days or even weeks.
 
----
-
-## ✨ Features
-
-- 🔁 **Automatic AD cycling** – tries all availability domains in a loop.
-- ⏳ **Smart retries** – exponential backoff on 429 errors, random delays on capacity.
-- 📊 **State persistence** – resumes where it left off after restarts.
-- 🔒 **Process lock** – prevents duplicate instances.
-- 📬 **Telegram notifications** – start, success, and critical errors.
-- 🎨 **Colored console output** – easy to spot success/errors.
-- 📦 **systemd service** – runs as a background daemon.
-- 🛠️ **One‑command install** – just run `install.sh`.
+This project continuously retries instance creation until capacity becomes available.
 
 ---
 
-## 📋 Prerequisites (prepare your server)
+# 🎭 Oracle UX: a small friendly rant
 
-> All steps are performed on the server where the hunter will run.  
-> Recommended OS: **Ubuntu 20.04 / 22.04 LTS**.
+Let's be honest — Oracle has all the resources needed to build one of the best cloud platforms on the market.
 
-### 1. Install Python and basic tools
+Instead, the OCI Console sometimes feels like a maze.
+
+Finding one Virtual Machine can become an archaeological expedition through dozens of menus and hidden buttons.
+
+The Always Free program is amazing.
+
+The UI... could use a little love. ❤️
+
+---
+
+# ✨ Features
+
+| Feature | Status |
+|----------|:------:|
+| Automatic Availability Domain rotation | ✅ |
+| Automatic Ubuntu ARM image detection | ✅ |
+| Smart retry logic | ✅ |
+| Exponential backoff for API limits | ✅ |
+| Random retry delays for capacity errors | ✅ |
+| Persistent state | ✅ |
+| Process lock | ✅ |
+| Colored console logging | ✅ |
+| Log file | ✅ |
+| Public IP detection | ✅ |
+| Telegram notifications | ✅ |
+| systemd service | ✅ |
+| One-command installation | ✅ |
+
+---
+
+# 📋 Prerequisites
+
+Recommended OS:
+
+- Ubuntu 20.04 LTS
+- Ubuntu 22.04 LTS
+
+---
+
+## 1. Install Python
+
+```bash
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv curl git
 
-### 2. Install and configure Oracle Cloud CLI
+sudo apt install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    curl \
+    git
+```
+
+---
+
+## 2. Install Oracle Cloud CLI
+
+```bash
 pip3 install oci-cli
+
 oci setup config
+```
 
-Follow the prompts – you’ll need your user OCID, tenancy OCID, and region (e.g., eu-frankfurt-1).  
-Verify the CLI works:
+Verify configuration:
+
+```bash
 oci iam availability-domain list
+```
 
-### 3. Prepare SSH public key
-The hunter injects your public key into the new instance.  
-It reads the file ~/.ssh/authorized_keys.  
-Make sure it exists and contains your public key:
+---
+
+## 3. Configure SSH
+
+Hunter injects your SSH public key into the created VM.
+
+Verify:
+
+```bash
 cat ~/.ssh/authorized_keys
+```
 
-If it doesn’t exist, create it:
+If the file doesn't exist:
+
+```bash
 mkdir -p ~/.ssh
-nano ~/.ssh/authorized_keys   # paste your public key
 
-### 4. Ensure a VCN and subnet exist
-The hunter uses the first VCN and subnet it finds in your tenancy.  
-Make sure you have at least one public subnet in the target region.
+nano ~/.ssh/authorized_keys
+```
 
-### 5. Always Free limits
-The maximum free ARM resources are: **2 OCPUs, 12 GB RAM**.  
-The hunter is preconfigured with these values – you don’t need to change anything.
+Paste your public key and save.
 
 ---
 
-## 🚀 Quick Start
+## 4. Create a VCN
 
-### Clone and install
+The hunter automatically uses the first available:
+
+- VCN
+- Public Subnet
+
+Make sure they already exist inside your OCI tenancy.
+
+---
+
+## 5. Always Free limits
+
+Oracle currently allows:
+
+| Resource | Value |
+|-----------|------:|
+| OCPUs | 2 |
+| RAM | 12 GB |
+
+The default configuration already matches these limits.
+
+---
+
+# 🚀 Installation
+
+Clone repository:
+
+```bash
 git clone https://github.com/DadjMahal/oracle-arm-hunter.git
+
 cd oracle-arm-hunter
+```
+
+Run installer:
+
+```bash
 chmod +x install.sh
+
 sudo ./install.sh
+```
 
-The installer will ask for:
-- **OCI Compartment OCID** (your tenancy)
-- **Subnet OCID**
-- **Telegram bot token & chat ID** (optional)
+Installer will ask for:
 
-All files will be placed in /opt/oracle-arm-hunter/.
+- OCI Compartment OCID
+- Subnet OCID
+- Telegram Bot Token (optional)
+- Telegram Chat ID (optional)
 
-### Manual test run
+Everything will be installed into:
+
+```text
+/opt/oracle-arm-hunter
+```
+
+---
+
+# ▶ Manual Run
+
+```bash
 cd /opt/oracle-arm-hunter
+
 source venv/bin/activate
+
 python hunter.py
+```
 
-### Run as a service (recommended)
+---
+
+# ⚙ Run as a Service
+
+Enable:
+
+```bash
 sudo systemctl enable oracle-arm-hunter
+```
+
+Start:
+
+```bash
 sudo systemctl start oracle-arm-hunter
+```
 
-Check status:
+Status:
+
+```bash
 systemctl status oracle-arm-hunter
+```
 
-View logs:
+Logs:
+
+```bash
 tail -f /opt/oracle-arm-hunter/logs/hunter.log
+```
+
+System journal:
+
+```bash
 sudo journalctl -u oracle-arm-hunter -f
+```
 
 ---
 
-## 📬 Telegram Setup
+# 📬 Telegram Notifications
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Get your chat ID by sending a message to your bot, then run:
-   curl https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
-3. During install.sh answer y when asked about Telegram, then provide the token and chat ID.
-   Alternatively, manually edit /etc/oracle-arm-hunter.env.
+Create a bot:
 
----
+> https://t.me/BotFather
 
-## ⚙️ Configuration (config.py)
+Get updates:
 
-All settings are in one file. Usually no changes are needed.
+```bash
+curl https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
+```
 
-| Parameter         | Default                  | Description |
-|-------------------|--------------------------|-------------|
-| INSTANCE_NAME     | retry-vm                 | VM display name |
-| SHAPE             | VM.Standard.A1.Flex      | ARM shape |
-| OCPUS             | 2                        | Number of OCPUs |
-| MEMORY            | 12                       | RAM in GB |
-| IMAGE_OS          | Canonical Ubuntu         | Operating system |
-| IMAGE_VERSION     | 24.04                    | Ubuntu version |
-| TELEGRAM_ENABLED  | true / false             | Enable notifications |
+Provide the token and Chat ID during installation or edit:
+
+```text
+/etc/oracle-arm-hunter.env
+```
 
 ---
 
-## 🧱 Project Structure
+# ⚙ Configuration
 
+Main configuration lives in:
+
+```text
+config.py
+```
+
+Example:
+
+```python
+INSTANCE_NAME = "retry-vm"
+
+SHAPE = "VM.Standard.A1.Flex"
+
+OCPUS = 2
+
+MEMORY = 12
+
+IMAGE_OS = "Canonical Ubuntu"
+
+IMAGE_VERSION = "24.04"
+
+TELEGRAM_ENABLED = True
+```
+
+---
+
+# 🔄 Retry Algorithm
+
+The hunter cycles through every Availability Domain.
+
+```text
+AD-1
+ │
+ ▼
+Out of capacity?
+ │
+ ▼
+AD-2
+ │
+ ▼
+Out of capacity?
+ │
+ ▼
+AD-3
+ │
+ ▼
+Out of capacity?
+ │
+ ▼
+Sleep
+ │
+ ▼
+Repeat
+```
+
+As soon as one Availability Domain has capacity:
+
+```text
+Create VM
+      │
+      ▼
+Get Public IP
+      │
+      ▼
+Save State
+      │
+      ▼
+Exit
+```
+
+---
+
+# 🏗 Architecture
+
+```text
+                    hunter.py
+                         │
+      ┌──────────────────┼──────────────────┐
+      │                  │                  │
+      ▼                  ▼                  ▼
+oracle_client.py     retry.py          state.py
+      │                  │                  │
+      └──────────────────┼──────────────────┘
+                         │
+                         ▼
+                    logger.py
+                         │
+                         ▼
+                      logs/
+```
+
+---
+
+# 📂 Project Structure
+
+```text
 oracle-arm-hunter/
-├── hunter.py               # Main loop
-├── oracle_client.py        # OCI SDK wrapper
-├── config.py               # All settings
-├── state.py                # Persistent state
-├── retry.py                # Retry manager
-├── logger.py               # Colored logging
-├── lock.py                 # Process lock
-├── telegram.py             # Telegram notifications
-├── requirements.txt        # Dependencies
-├── install.sh              # One‑command installer
-├── oracle-arm-hunter.service  # systemd unit
-└── README.md
+│
+├── hunter.py                 # Main application loop
+├── oracle_client.py          # Oracle Cloud SDK wrapper
+├── config.py                 # Configuration
+├── retry.py                  # Retry manager
+├── state.py                  # Persistent state
+├── logger.py                 # Logging
+├── lock.py                   # Process lock
+├── telegram.py               # Telegram notifications
+│
+├── requirements.txt
+├── install.sh
+├── oracle-arm-hunter.service
+├── README.md
+│
+├── logs/
+│   └── hunter.log
+│
+└── state/
+    ├── hunter.json
+    └── retry.json
+```
 
 ---
 
-## ❓ FAQ
+# 📄 Log Files
 
-**Will I be charged?**  
-No. The hunter uses only Always Free resources (2 OCPUs, 12 GB). It cannot exceed the free limit.
+Application log:
 
-**What if the instance already exists?**  
-The hunter will detect it, print the public IP, and exit.
+```text
+logs/hunter.log
+```
 
-**How long does it take?**  
-Anywhere from a few minutes to several days, depending on regional capacity.
+State:
 
-**How do I stop it?**  
-sudo systemctl stop oracle-arm-hunter or press Ctrl+C if running manually.
+```text
+state/hunter.json
+```
 
-**Is it safe to reboot the server?**  
-Yes, the systemd service will start the hunter automatically after a reboot.
+Retry metadata:
+
+```text
+state/retry.json
+```
 
 ---
 
-## 📝 License
+# ❓ FAQ
 
-MIT
+### Will I be charged?
+
+No.
+
+The default configuration uses Oracle Always Free resources only.
+
+---
+
+### What happens if the VM already exists?
+
+The hunter detects the instance, prints its Public IP, and exits immediately.
+
+---
+
+### How long can it take?
+
+Anything from a few minutes to several days depending on Oracle's available capacity.
+
+---
+
+### Can I reboot the server?
+
+Yes.
+
+If installed as a systemd service, the hunter starts automatically after reboot.
+
+---
+
+### How do I stop it?
+
+```bash
+sudo systemctl stop oracle-arm-hunter
+```
+
+Or simply press:
+
+```text
+Ctrl + C
+```
+
+when running manually.
+
+---
+
+# ❤️ Contributing
+
+Pull requests, bug reports and feature suggestions are always welcome.
+
+If this project saved you hours of clicking through the OCI Console, consider giving it a ⭐ on GitHub.
+
+---
+
+# 📜 License
+
+MIT License
