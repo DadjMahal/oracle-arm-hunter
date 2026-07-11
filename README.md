@@ -7,7 +7,7 @@ No more refreshing the OCI Console every few minutes — just start the hunter a
 
 ---
 
-# 💢 Why this exists
+## 💢 Why this exists
 
 Oracle Cloud offers an excellent **Always Free** ARM tier:
 
@@ -25,7 +25,7 @@ This project continuously retries instance creation until capacity becomes avail
 
 ---
 
-# 🎭 Oracle UX: a small friendly rant
+## 🎭 Oracle UX: a small friendly rant
 
 Let's be honest — Oracle has all the resources needed to build one of the best cloud platforms on the market.
 
@@ -39,21 +39,22 @@ The UI... could use a little love. ❤️
 
 ---
 
-# ✨ Features
+## ✨ Features
 
 | Feature | Status |
 |----------|:------:|
 | Automatic Availability Domain rotation | ✅ |
-| Automatic Ubuntu ARM image detection | ✅ |
-| Smart retry logic | ✅ |
-| Exponential backoff for API limits | ✅ |
-| Random retry delays for capacity errors | ✅ |
+| Automatic Ubuntu ARM image detection (via shape filter) | ✅ |
+| Smart adaptive retry logic (self-tuning delays) | ✅ |
+| Exponential backoff for 429 rate limits | ✅ |
+| Dynamic micro-pacing between AD requests | ✅ |
 | Persistent state | ✅ |
 | Process lock | ✅ |
 | Colored console logging | ✅ |
-| Log file | ✅ |
+| Log file rotation | ✅ |
 | Public IP detection | ✅ |
-| Telegram notifications | ✅ |
+| Multi-instance support (split Always Free pool) | ✅ |
+| Telegram notifications + interactive commands | ✅ |
 | systemd service | ✅ |
 | One-command installation | ✅ |
 
@@ -65,8 +66,6 @@ Recommended OS:
 
 - Ubuntu 20.04 LTS
 - Ubuntu 22.04 LTS
-
----
 
 ## 1. Install Python
 
@@ -210,7 +209,7 @@ Status:
 systemctl status oracle-arm-hunter
 ```
 
-Logs:
+Application log:
 
 ```bash
 tail -f /opt/oracle-arm-hunter/logs/hunter.log
@@ -224,23 +223,32 @@ sudo journalctl -u oracle-arm-hunter -f
 
 ---
 
-# 📬 Telegram Notifications
+# 📬 Telegram Notifications & Commands
 
 Create a bot:
 
 > https://t.me/BotFather
 
-Get updates:
+Get your Chat ID:
 
 ```bash
 curl https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
 ```
 
-Provide the token and Chat ID during installation or edit:
+Provide the Bot Token and Chat ID during installation, or edit:
 
 ```text
 /etc/oracle-arm-hunter.env
 ```
+
+Once connected, you can send these commands directly to your bot:
+
+| Command | Description |
+|----------|-------------|
+| `/status` | Show current hunting statistics |
+| `/pause` | Pause instance creation attempts |
+| `/resume` | Resume hunting |
+| `/stop` | Gracefully stop the hunter |
 
 ---
 
@@ -270,6 +278,25 @@ IMAGE_VERSION = "24.04"
 TELEGRAM_ENABLED = True
 ```
 
+Multiple instances can be configured using:
+
+```bash
+export HUNTER_INSTANCES='[
+  {
+    "name":"vm1",
+    "ocpus":2,
+    "memory":12
+  },
+  {
+    "name":"vm2",
+    "ocpus":2,
+    "memory":12
+  }
+]'
+```
+
+For a complete list of supported environment variables, see the beginning of `config.py`.
+
 ---
 
 # 🔄 Retry Algorithm
@@ -295,13 +322,16 @@ AD-3
 Out of capacity?
  │
  ▼
-Sleep
+Adaptive sleep
+(25–35s,
+up to 70s
+when rate-limited)
  │
  ▼
 Repeat
 ```
 
-As soon as one Availability Domain has capacity:
+When capacity becomes available:
 
 ```text
 Create VM
@@ -313,7 +343,9 @@ Get Public IP
 Save State
       │
       ▼
-Exit
+Continue hunting
+remaining instances
+(if configured)
 ```
 
 ---
@@ -331,10 +363,13 @@ oracle_client.py     retry.py          state.py
       └──────────────────┼──────────────────┘
                          │
                          ▼
+                    telegram.py
+                         │
+                         ▼
                     logger.py
                          │
                          ▼
-                      logs/
+                       logs/
 ```
 
 ---
@@ -344,17 +379,17 @@ oracle_client.py     retry.py          state.py
 ```text
 oracle-arm-hunter/
 │
-├── hunter.py                 # Main application loop
-├── oracle_client.py          # Oracle Cloud SDK wrapper
-├── config.py                 # Configuration
-├── retry.py                  # Retry manager
-├── state.py                  # Persistent state
-├── logger.py                 # Logging
-├── lock.py                   # Process lock
-├── telegram.py               # Telegram notifications
+├── hunter.py                     # Main application loop
+├── oracle_client.py              # OCI SDK wrapper
+├── config.py                     # Configuration
+├── retry.py                      # Adaptive retry manager
+├── state.py                      # Persistent state manager
+├── logger.py                     # Colored logging
+├── lock.py                       # Prevent multiple instances
+├── telegram.py                   # Telegram notifications
 │
-├── requirements.txt
 ├── install.sh
+├── requirements.txt
 ├── oracle-arm-hunter.service
 ├── README.md
 │
@@ -376,7 +411,7 @@ Application log:
 logs/hunter.log
 ```
 
-State:
+Persistent state:
 
 ```text
 state/hunter.json
@@ -392,35 +427,58 @@ state/retry.json
 
 # ❓ FAQ
 
-### Will I be charged?
+## Will I be charged?
 
 No.
 
-The default configuration uses Oracle Always Free resources only.
+The default configuration stays within Oracle Cloud Always Free limits.
 
 ---
 
-### What happens if the VM already exists?
+## What happens if the VM already exists?
 
-The hunter detects the instance, prints its Public IP, and exits immediately.
-
----
-
-### How long can it take?
-
-Anything from a few minutes to several days depending on Oracle's available capacity.
+The hunter detects the instance, prints its Public IP and skips it.
 
 ---
 
-### Can I reboot the server?
+## Can I create multiple smaller VMs?
 
 Yes.
 
-If installed as a systemd service, the hunter starts automatically after reboot.
+Example:
+
+```bash
+export HUNTER_INSTANCES='[
+  {
+    "name":"web",
+    "ocpus":1,
+    "memory":6
+  },
+  {
+    "name":"db",
+    "ocpus":1,
+    "memory":6
+  }
+]'
+```
 
 ---
 
-### How do I stop it?
+## How long can it take?
+
+Anywhere from a few minutes to several days depending on Oracle's available capacity.
+
+---
+
+## Can I reboot the server?
+
+Yes.
+
+When installed as a systemd service, the hunter automatically starts after reboot.
+
+---
+
+## How do I stop it?
 
 ```bash
 sudo systemctl stop oracle-arm-hunter
@@ -440,7 +498,7 @@ when running manually.
 
 Pull requests, bug reports and feature suggestions are always welcome.
 
-If this project saved you hours of clicking through the OCI Console, consider giving it a ⭐ on GitHub.
+If this project saved you hours of refreshing the OCI Console, consider giving it a ⭐ on GitHub.
 
 ---
 
