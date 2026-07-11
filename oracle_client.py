@@ -72,18 +72,28 @@ class OracleClient:
             raise
 
     def get_latest_image(self):
-        """Find the latest Ubuntu ARM image matching our criteria."""
+        """
+        Find the latest Ubuntu image compatible with our shape.
+        Uses official OCI shape filter to avoid fragile string matching.
+        """
         try:
+            # Use shape filter to get only compatible images (P1.1)
             images = self.compute.list_images(
                 compartment_id=self.tenancy_id,
-                operating_system=config.IMAGE_OS
+                operating_system=config.IMAGE_OS,
+                shape=config.SHAPE          # ✅ OCI ensures ARM compatibility
             ).data
-            candidates = []
-            for img in images:
-                if config.IMAGE_VERSION in img.display_name and "aarch64" in img.display_name:
-                    candidates.append(img)
+
+            # Filter by version (still needed for selecting correct OS version)
+            candidates = [
+                img for img in images
+                if config.IMAGE_VERSION in img.display_name
+            ]
             if not candidates:
-                raise RuntimeError("❌ No suitable ARM image found.")
+                raise RuntimeError(
+                    f"❌ No image found for shape={config.SHAPE}, "
+                    f"os={config.IMAGE_OS}, version={config.IMAGE_VERSION}"
+                )
             candidates.sort(key=lambda x: x.time_created, reverse=True)
             image = candidates[0]
             logger.debug(f"🖼️ Selected image: {image.display_name} ({image.id})")

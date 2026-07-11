@@ -10,7 +10,8 @@ from logger import logger
 class RetryManager:
     """
     Manages retry delays with dynamic self-tuning.
-    Tracks 429 history and automatically adjusts micro-pacing to achieve 0 errors.
+    Aggressively speeds up when clean, slows down only when 429 appears.
+    Goal: maximum request speed without triggering 429 errors.
     """
     def __init__(self):
         self.backoff = config.INITIAL_BACKOFF
@@ -21,12 +22,12 @@ class RetryManager:
             "last_error": "",
             "total_retries": 0,
             "retries_today": 0,
-            "total_429s": 0,                  # 📊 New 429 Counter
-            "micro_delay": 2,                 # ⏱️ Dynamic micro-delay between ADs
+            "total_429s": 0,
+            "micro_delay": 3,                 # Default micro-delay: 3s (middle of 2-5 range)
             "date": datetime.now().strftime("%Y-%m-%d"),
             "last_retry_time": None,
-            "adaptive_min": config.MIN_DELAY,
-            "adaptive_max": config.MAX_DELAY,
+            "adaptive_min": 25,               # Start at optimal 25s
+            "adaptive_max": 35,               # Start at optimal 35s
             "consecutive_clean_requests": 0
         }
         self.load()
@@ -55,8 +56,13 @@ class RetryManager:
             logger.warning(f"⚠️ Failed to save retry state: {e}")
 
     def get_micro_delay(self):
-        """Returns the current dynamically optimized micro-delay."""
-        return self.data.get("micro_delay", 2)
+        """
+        Returns a RANDOMIZED micro-delay between 2 and current micro_delay value.
+        This prevents predictable patterns that Oracle can detect.
+        """
+        current_max = self.data.get("micro_delay", 3)
+        delay = random.randint(2, max(2, current_max))
+        return delay
 
     def _update_stats(self, delay, error):
         """Record new retry info and daily counters."""
@@ -73,50 +79,59 @@ class RetryManager:
         self.save()
 
     def wait_capacity(self):
-        """Standard capacity check loop. Gradually speeds up if safe."""
-        current_min = self.data.get("adaptive_min", config.MIN_DELAY)
-        current_max = self.data.get("adaptive_max", config.MAX_DELAY)
+        """
+        Standard capacity check loop.
+        Quickly speeds up to optimal 25-35s range when environment is clean.
+        """
+        current_min = self.data.get("adaptive_min", 25)
+        current_max = self.data.get("adaptive_max", 35)
 
         self.data["consecutive_clean_requests"] = self.data.get("consecutive_clean_requests", 0) + 1
         clean_streak = self.data["consecutive_clean_requests"]
 
-        # 🚀 If we have a massive clean streak (100 cycles), try to optimize micro-delay down
-        if clean_streak % 100 == 0 and self.data.get("micro_delay", 2) > 2:
-            self.data["micro_delay"] -= 1
-            logger.info(f"⚡ Stability High! Lowering micro-delay to {self.data['micro_delay']}s")
-
-        if clean_streak >= 30:
-            if current_min > 16:
-                current_min -= 1
-                current_max -= 1
+        # 🚀 FAST OPTIMIZATION: reduce delays after just 12 clean cycles (~6 min)
+        if clean_streak >= 12:
+            if current_min > 25:
+                # Move 2 seconds closer to optimal per 12 clean cycles
+                current_min = max(25, current_min - 2)
+                current_max = max(35, current_max - 2)
                 self.data["adaptive_min"] = current_min
                 self.data["adaptive_max"] = current_max
-                logger.info(f"🔥 Optimization: 30 clean requests. Speeding up baseline to {current_min}-{current_max}s!")
+                logger.info(f"🔥 Speed boost: {clean_streak} clean cycles. Accelerating to {current_min}-{current_max}s!")
             self.data["consecutive_clean_requests"] = 0
+
+            # ⚡ After 60 total clean requests, reduce micro-delay to absolute minimum
+            if self.data.get("total_retries", 0) > 0 and self.data.get("total_retries", 0) % 60 == 0:
+                if self.data.get("micro_delay", 3) > 3:
+                    self.data["micro_delay"] = max(2, self.data["micro_delay"] - 1)
+                    logger.info(f"⚡ Micro-optimization: micro-delay now 2-{self.data['micro_delay']}s!")
 
         delay = random.randint(current_min, current_max)
         self._update_stats(delay, "Out of host capacity")
         return delay
 
     def wait_429(self):
-        """Oracle is angry. Instantly slow down base pace and increase micro-delays."""
+        """
+        Oracle rate-limited us. Temporarily slow down, then quickly recover.
+        """
         self.data["total_429s"] = self.data.get("total_429s", 0) + 1
-        
-        # 🛡️ Anti-DDoS Action: Increase micro-delay between AD requests to prevent burst triggers
-        current_micro = self.data.get("micro_delay", 2)
-        if current_micro < 5:
-            self.data["micro_delay"] = current_micro + 1
-            logger.warning(f"🛡️ Smart Defense: Adjusting micro-delay between ADs to {self.data['micro_delay']}s to kill 429s.")
 
-        current_min = self.data.get("adaptive_min", config.MIN_DELAY)
-        current_max = self.data.get("adaptive_max", config.MAX_DELAY)
+        # 🛡️ Increase micro-delay to maximum 5s during 429 storms
+        current_micro = self.data.get("micro_delay", 3)
+        if current_micro < 5:
+            self.data["micro_delay"] = min(5, current_micro + 1)
+            logger.warning(f"🛡️ 429 detected! Micro-delay increased to 2-{self.data['micro_delay']}s range.")
+
+        # Slow down main cycle to 60-70s range during active 429 errors
+        current_min = self.data.get("adaptive_min", 25)
+        current_max = self.data.get("adaptive_max", 35)
 
         if current_min < 61:
-            current_min += 3
-            current_max += 3
+            current_min = min(61, current_min + 3)
+            current_max = min(71, current_max + 3)
             self.data["adaptive_min"] = current_min
             self.data["adaptive_max"] = current_max
-            logger.warning(f"📉 Optimization: 429 detected. Slowing down baseline to {current_min}-{current_max}s.")
+            logger.warning(f"📉 429 slow-down: baseline increased to {current_min}-{current_max}s.")
 
         self.data["consecutive_clean_requests"] = 0
 
@@ -124,7 +139,7 @@ class RetryManager:
         jitter_range = base_delay * config.JITTER_FACTOR
         delay = int(base_delay + random.uniform(-jitter_range, jitter_range))
         delay = max(config.INITIAL_BACKOFF, delay)
-        
+
         self.backoff = min(self.backoff * 2, config.MAX_BACKOFF)
         self._update_stats(delay, "429 Too Many Requests")
         return delay

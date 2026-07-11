@@ -9,7 +9,7 @@ from logger import logger
 class TelegramNotifier:
     """
     Sends notifications via Telegram bot and runs a background listener
-    to respond to interactive commands like /status.
+    to respond to interactive commands like /status, /pause, /resume, /stop.
     """
     def __init__(self):
         self.enabled = config.TELEGRAM_ENABLED
@@ -41,12 +41,17 @@ class TelegramNotifier:
 
     def notify_start(self, state):
         """Send a startup notification with details."""
+        instance_list = "\n".join(
+            f"• {inst['name']} ({inst['ocpus']} OCPU, {inst['memory']} GB)"
+            for inst in config.INSTANCES
+        )
         msg = f"""🚀 <b>Oracle ARM Hunter Started</b>
 
 <b>Version:</b> {config.VERSION}
 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-<b>Target:</b> {config.SHAPE} ({config.OCPUS} OCPU, {config.MEMORY} GB)
-<b>Instance:</b> {config.INSTANCE_NAME}
+<b>Shape:</b> {config.SHAPE}
+<b>Target instances:</b>
+{instance_list}
 <b>Region:</b> eu-frankfurt-1
 
 <i>Searching for available capacity…</i>"""
@@ -64,7 +69,7 @@ class TelegramNotifier:
 <b>Total Cycles:</b> {cycles}
 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-<i>Hunter completed successfully.</i>"""
+<i>Hunter continues for remaining instances if any.</i>"""
         self.send_message(msg)
 
     def notify_error(self, error_message, state):
@@ -85,13 +90,12 @@ class TelegramNotifier:
             return
         listener_thread = threading.Thread(target=self._command_loop, args=(state, retry), daemon=True)
         listener_thread.start()
-        logger.info("🤖 Telegram command listener successfully activated in background.")
+        logger.info("🤖 Telegram command listener activated (/status, /pause, /resume, /stop).")
 
     def _command_loop(self, state, retry):
-        """Internal loop to catch and process /status command using long-polling."""
+        """Internal loop to catch and process commands."""
         offset = 0
-        
-        # 🔄 Drop old messages from queue on startup to avoid spamming replies
+        # Drop old messages
         try:
             url = f"https://api.telegram.org/bot{self.token}/getUpdates"
             resp = requests.get(url, params={"limit": 1, "timeout": 1}, timeout=5)
@@ -105,7 +109,6 @@ class TelegramNotifier:
         while True:
             try:
                 url = f"https://api.telegram.org/bot{self.token}/getUpdates"
-                # Use standard long-polling timeout to save resource and react instantly
                 resp = requests.get(url, params={"offset": offset, "timeout": 20}, timeout=25)
                 if resp.status_code != 200:
                     time.sleep(5)
@@ -118,12 +121,20 @@ class TelegramNotifier:
                     text = message.get("text", "").strip()
                     chat_id = str(message.get("chat", {}).get("id", ""))
 
-                    # 🛡️ Only process commands coming from your authorized Chat ID
                     if chat_id != str(self.chat_id):
                         continue
 
                     if text == "/status":
                         self._send_status_reply(state, retry)
+                    elif text == "/pause":
+                        state.pause()
+                        self.send_message("⏸️ Hunter paused. Use /resume to continue.")
+                    elif text == "/resume":
+                        state.resume()
+                        self.send_message("▶️ Hunter resumed.")
+                    elif text == "/stop":
+                        state.request_stop()
+                        self.send_message("🛑 Stop request received. Hunter will exit after current cycle.")
 
             except Exception as e:
                 logger.debug(f"Telegram listener temporary error: {e}")
@@ -133,11 +144,21 @@ class TelegramNotifier:
         """Compiles accurate hunting telemetry metrics and replies to user."""
         s_data = state.data
         r_data = retry.data
-        
-        status_label = "🎉 SUCCESS" if s_data.get("success") else "🎮 HUNTING ACTIVE"
+
+        # Gather per-instance status
+        instance_lines = []
+        for inst in s_data.get("instances", []):
+            status = "✅" if inst["success"] else "⏳"
+            instance_lines.append(f"{status} {inst['name']} ({inst['ocpus']} OCPU, {inst['memory']} GB)")
+        instances_str = "\n".join(instance_lines) if instance_lines else "None configured"
+
+        status_label = "🎉 ALL DONE" if s_data.get("success") else "🎮 HUNTING"
+        if s_data.get("paused"):
+            status_label = "⏸️ PAUSED"
+        if s_data.get("stop_requested"):
+            status_label = "🛑 STOPPING"
+
         started_clean = s_data.get("started_at", "N/A")[:19].replace("T", " ")
-        
-        # Calculate dynamic next check time estimate
         next_ts = r_data.get("next_retry", time.time())
         next_check = datetime.fromtimestamp(next_ts).strftime('%H:%M:%S')
 
@@ -146,21 +167,19 @@ class TelegramNotifier:
 ℹ️ <b>Status:</b> <code>{status_label}</code>
 🔄 <b>Current Cycle:</b> #{s_data.get("cycle", 0)}
 🎯 <b>Current Attempt:</b> #{s_data.get("attempt", 0)}
-📍 <b>Last Searched AD:</b> <code>{s_data.get("current_ad", "None") or "None"}</code>
+📍 <b>Last AD:</b> <code>{s_data.get("current_ad", "None") or "None"}</code>
+──────────────────
+<b>Instances:</b>
+{instances_str}
 ──────────────────
 📊 <b>Statistics:</b>
 ├ 🔁 <b>Total Requests:</b> {r_data.get("total_retries", 0)}
 ├ 📅 <b>Retries Today:</b> {r_data.get("retries_today", 0)}
-└ ⏱️ <b>Last Sleep Delay:</b> {r_data.get("last_delay", 0)}s
-
-🕒 <b>Started At:</b> <code>{started_clean}</code>
-🔮 <b>Next Wakeup At:</b> <code>{next_check}</code>
+└ ⏱️ <b>Last Sleep:</b> {r_data.get("last_delay", 0)}s
+🕒 <b>Started:</b> <code>{started_clean}</code>
+🔮 <b>Next Wakeup:</b> <code>{next_check}</code>
 """
-        if s_data.get("success"):
-            msg += f"🌐 <b>Public IP Assigned:</b> <code>{s_data.get('public_ip', 'N/A')}</code>\n"
-            msg += f"🆔 <b>VM ID:</b> <code>{s_data.get('instance_id', 'N/A')}</code>"
-            
         self.send_message(msg)
 
-# Create a global notifier instance
+# Global notifier instance
 notifier = TelegramNotifier()

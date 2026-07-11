@@ -11,8 +11,14 @@ WorkingDirectory=/opt/oracle-arm-hunter
 Environment=PATH=/opt/oracle-arm-hunter/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/etc/oracle-arm-hunter.env
 ExecStart=/opt/oracle-arm-hunter/venv/bin/python /opt/oracle-arm-hunter/hunter.py
+
+# --- Automatic restart on failure (P0.2) ---
 Restart=on-failure
 RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=3
+# ------------------------------------------
+
 StandardOutput=append:/opt/oracle-arm-hunter/logs/service.log
 StandardError=append:/opt/oracle-arm-hunter/logs/service-error.log
 
